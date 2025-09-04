@@ -1,3 +1,4 @@
+// In Hero.jsx
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import gradientBackground from '../assets/gradientBackground.png';
@@ -7,7 +8,7 @@ import { useClerk, useUser } from '@clerk/clerk-react';
 const Hero = () => {
     const navigate = useNavigate();
     const { openSignIn } = useClerk();
-    const { isSignedIn } = useUser();
+    const { isSignedIn, isLoaded } = useUser();
 
     const handleGetStarted = () => {
         if (isSignedIn) {
@@ -19,6 +20,10 @@ const Hero = () => {
             });
         }
     };
+
+    if (!isLoaded) {
+        return null; // or a loading spinner
+    }
 
     return (
         <div
@@ -40,9 +45,8 @@ const Hero = () => {
                     onClick={handleGetStarted} 
                     className='bg-primary text-white px-10 py-3 rounded-lg hover:scale-102 active:scale-95 transition cursor-pointer'
                 >
-                    Start Creating Now 
+                    {isSignedIn ? 'Go to Dashboard' : 'Start Creating Now'}
                 </button>
-               
             </div>
             <div className='flex items-center gap-4 mt-8 mx-auto text-gray-600'>
                 <img src={assets.user_group} alt="" className='h-8'/>

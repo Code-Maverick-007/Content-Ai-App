@@ -1,5 +1,5 @@
+import { pool, query } from "../configs/db.js";
 import OpenAI from "openai";
-import sql from "../configs/db.js";
 import { clerkClient } from "@clerk/express";
 import axios from "axios";
 import FormData from "form-data";
@@ -52,8 +52,11 @@ export const generateArticale = async (req, res) => {
         const content = response.choices[0].message.content;
         
 
-        await sql` INSERT INTO creations (user_id, prompt, content, type)
-        VALUES (${userId}, ${prompt}, ${content}, 'article') `;
+        await query(
+          `INSERT INTO creations (user_id, prompt, content, type)
+          VALUES ($1, $2, $3, 'article')`,
+          [userId, prompt, content]
+        );
 
         if(plan !== 'premium'){
             await clerkClient.users.updateUserMetadata(userId, {
@@ -106,8 +109,11 @@ export const generateBlogTitle = async (req, res) => {
        
 
 
-        await sql` INSERT INTO creations (user_id, prompt, content, type)
-        VALUES (${userId}, ${prompt}, ${content}, 'blog_title') `;
+        await query(
+          `INSERT INTO creations (user_id, prompt, content, type)
+          VALUES ($1, $2, $3, 'blog_title')`,
+          [userId, prompt, content]
+        );
 
         if(plan !== 'premium'){
             await clerkClient.users.updateUserMetadata(userId, {
@@ -227,21 +233,47 @@ export const generateImage = async (req, res) => {
 
     console.log('Image uploaded to Cloudinary, saving to database...');
     
-    // Save to database
-    const result = await sql`
-      INSERT INTO creations (user_id, prompt, content, type)
-      VALUES (${userId}, ${prompt}, ${uploadResult.secure_url}, 'image')
-      RETURNING id, created_at
-    `;
-
-    console.log('Image generation completed successfully');
-    
-    return res.json({ 
-      success: true, 
-      content: uploadResult.secure_url,
-      id: result[0]?.id,
-      createdAt: result[0]?.created_at
-    });
+    try {
+      // Save to database using the query function
+      console.log('Executing database query...');
+      const result = await query(
+        `INSERT INTO creations (user_id, prompt, content, type)
+         VALUES ($1, $2, $3, 'image')
+         RETURNING id, created_at`,
+        [userId, prompt, uploadResult.secure_url]
+      );
+      
+      if (!result || result.rows.length === 0) {
+        throw new Error('No result returned from database query');
+      }
+      
+      console.log('Database query successful, result:', JSON.stringify(result.rows[0]));
+      
+      return res.json({ 
+        success: true, 
+        content: uploadResult.secure_url,
+        id: result.rows[0]?.id,
+        createdAt: result.rows[0]?.created_at
+      });
+      
+    } catch (dbError) {
+      console.error('Database error in generateImage:', {
+        error: dbError,
+        message: dbError.message,
+        stack: dbError.stack,
+        userId,
+        promptLength: prompt?.length,
+        urlLength: uploadResult?.secure_url?.length
+      });
+      
+      // Still return a success response with the image URL even if database save fails
+      return res.json({
+        success: true,
+        content: uploadResult.secure_url,
+        message: 'Image generated but could not save to database',
+        error: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+      });
+    }
     
   } catch (error) {
     console.error("Error in generateImage:", {
@@ -278,104 +310,6 @@ export const generateImage = async (req, res) => {
 
 
 
-
-  export const removeImageBackground = async (req, res) => {
-    try {
-      const userId = req.userId;
-      const plan = req.plan;
-      const image = req.file;
-      
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'No image file provided. Please upload an image.'
-        });
-      }
-
-      // Free accounts can't use this feature
-      if (plan !== "premium") {
-        return res.status(403).json({
-          success: false,
-          message: "This feature is only available in premium subscription"
-        });
-      }
-
-      console.log('Processing image for background removal:', {
-        userId,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size
-      });
-
-      // Upload to Cloudinary with background removal
-      const uploadResult = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload(
-          req.file.path,
-          {
-            folder: 'bg-removed-images',
-            resource_type: 'image',
-            transformation: [
-              { effect: 'background_removal',
-                quality: 'auto:good',
-                fetch_format: 'auto' }
-            ]
-          },
-          (error, result) => {
-            if (error) {
-              console.error('Cloudinary upload error:', error);
-              reject(error);
-            } else {
-              resolve(result);
-            }
-          }
-        );
-      });
-
-      if (!uploadResult || !uploadResult.secure_url) {
-        throw new Error('Failed to process image with background removal');
-      }
-
-      // Save to database
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type)
-        VALUES (${userId}, 'Background removed from image', ${uploadResult.secure_url}, 'image')
-      `;
-
-      console.log('Background removal completed successfully');
-      
-      return res.json({ 
-        success: true, 
-        content: uploadResult.secure_url,
-        message: 'Background removed successfully'
-      });
-
-    } catch (error) {
-      console.error('Error in removeImageBackground:', {
-        message: error.message,
-        stack: error.stack,
-        response: error.response?.data ? String(error.response.data).substring(0, 200) : undefined
-      });
-
-      let errorMessage = 'Failed to remove background. Please try again.';
-      let statusCode = 500;
-
-      if (error.message.includes('format') || error.message.includes('file type')) {
-        errorMessage = 'Unsupported file format. Please upload a valid image file.';
-        statusCode = 400;
-      } else if (error.message.includes('Cloudinary')) {
-        errorMessage = 'Error processing the image. Please try again.';
-      }
-
-      return res.status(statusCode).json({
-        success: false,
-        message: errorMessage,
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  };
-
-
-
   export const removeImageObject = async (req, res) => {
     try {
       const userId = req.userId;
@@ -399,8 +333,11 @@ export const generateImage = async (req, res) => {
       });
   
       // Record in DB
-      await sql`INSERT INTO creations (user_id, prompt, content, type)
-                VALUES (${userId}, ${`Remove ${object} from image`}, ${result.secure_url}, 'image')`;
+      await query(
+        `INSERT INTO creations (user_id, prompt, content, type)
+        VALUES ($1, $2, $3, 'image')`,
+        [userId, `Remove ${object} from image`, result.secure_url]
+      );
   
       // Return the processed image URL
       res.json({ 
@@ -529,8 +466,11 @@ export const generateImage = async (req, res) => {
           
           // Record in DB
           try {
-            await sql`INSERT INTO creations (user_id, prompt, content, type)
-                     VALUES (${userId}, 'Review the uploaded resume', ${content}, 'resume-review')`;
+            await query(
+              `INSERT INTO creations (user_id, prompt, content, type)
+              VALUES ($1, $2, $3, 'resume-review')`,
+              [userId, 'Review the uploaded resume', content]
+            );
             console.log('Record saved to database');
           } catch (dbError) {
             console.error("Database error:", dbError);
