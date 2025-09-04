@@ -48,14 +48,30 @@ const GenerateImages = () => {
       );
 
       if (data.success) {
-        setImageUrl(data.url); 
+        setImageUrl(data.content); 
         toast.success('Image generated successfully!');
       } else {
         toast.error(data.message || 'Failed to generate image');
       }
     } catch (error) {
-      console.error('Error generating image:', error);
-      toast.error(error.response?.data?.message || 'Failed to generate image. Please try again.');
+      console.error('Error generating image:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          data: error.config?.data
+        }
+      });
+      
+      const errorMessage = error.response?.data?.message || 
+                         error.response?.data?.error || 
+                         error.message || 
+                         'Failed to generate image. Please try again.';
+      
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
